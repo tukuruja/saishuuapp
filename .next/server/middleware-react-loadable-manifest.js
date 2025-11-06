@@ -1,0 +1,1 @@
+self.__REACT_LOADABLE_MANIFEST="{\"app/viewer/[drawingId]/page.tsx -> @/components/viewer/DrawingCanvas\":{\"id\":\"app/viewer/[drawingId]/page.tsx -> @/components/viewer/DrawingCanvas\",\"files\":[\"static/chunks/_app-pages-browser_src_components_viewer_DrawingCanvas_tsx.js\"]}}"
