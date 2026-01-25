@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0, user-scalable=yes">
+  <title>VΩ.Infinity Task Master</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src='https://cdn.jsdelivr.net/npm/fullcalendar@6.1.10/index.global.min.js'></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+
+  <style>
+    :root { --primary-bg: #f4f6f9; --accent-color: #2e7d32; }
+    body { font-family: "Meiryo", sans-serif; background: var(--primary-bg); height: 100vh; overflow: hidden; display: flex; flex-direction: column; }
+    .main-content { flex: 1; overflow-y: auto; padding: 10px; padding-bottom: 80px; -webkit-overflow-scrolling: touch; }
+    .view-pane { display: none; animation: fadeIn 0.3s; }
+    .view-pane.active { display: block; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    /* Calendar & Allocation */
+    .fc-event { cursor: pointer; border: none !important; margin: 2px 0 !important; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
+    .fc-event-main { padding: 4px; width: 100%; white-space: normal; }
+    .evt-header { font-weight: 900; font-size: 0.9rem; border-bottom: 1px solid rgba(255,255,255,0.3); }
+    .evt-row { font-size: 0.8rem; display: flex; align-items: center; gap: 4px; line-height: 1.2; margin-top: 1px; }
+
+    #alloc-table td { vertical-align: middle; padding: 2px !important; height: 40px; overflow: hidden; position: relative; }
+    .alloc-cell-text { font-size: 10px; font-weight: bold; color: #fff; text-shadow: 1px 1px 2px rgba(0,0,0,0.8); line-height: 1.1; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+    /* Print */
+    @media print {
+        .no-print, .nav-tabs, .fab, #loading-screen { display: none !important; }
+        body, .main-content { height: auto !important; overflow: visible !important; background: #fff !important; }
+        .col-md-9 { width: 100% !important; flex: 0 0 100% !important; max-width: 100% !important; }
+        #calendar { border: none !important; }
+        .fc-event { print-color-adjust: exact !important; }
+    }
+
+    .fab { position: fixed; bottom: 20px; right: 20px; width: 60px; height: 60px; border-radius: 50%; background: var(--accent-color); color: white; font-size: 24px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 1050; display: flex; justify-content: center; align-items: center; }
+    #loading-screen { position: fixed; inset: 0; background: rgba(255,255,255,0.95); z-index: 9999; display: flex; align-items: center; justify-content: center; flex-direction: column; }
+    .rpt-section { border-left: 4px solid #ccc; padding-left: 10px; margin-bottom: 10px; background: #fff; border-radius: 4px; padding: 10px; }
+  </style>
+</head>
+<body>
+
+  <div id="loading-screen"><div class="spinner-border text-success"></div><div class="mt-2 fw-bold text-success"><?= loadingMsg ?></div></div>
+
+  <ul class="nav nav-tabs nav-fill bg-white shadow-sm sticky-top no-print">
+    <li class="nav-item"><button class="nav-link active" onclick="switchTab('cal')"><i class="fas fa-calendar-alt"></i> 予定</button></li>
+    <li class="nav-item"><button class="nav-link" onclick="switchTab('alloc')"><i class="fas fa-th"></i> 配置</button></li>
+    <li class="nav-item"><button class="nav-link" onclick="switchTab('analysis')"><i class="fas fa-chart-pie"></i> 分析</button></li>
+    <li class="nav-item"><button class="nav-link" onclick="switchTab('history')"><i class="fas fa-history"></i> 履歴</button></li>
+    <li class="nav-item"><button class="nav-link" onclick="switchTab('config')"><i class="fas fa-cog"></i> 設定</button></li>
+  </ul>
+
+  <div class="main-content">
+
+    <div id="view-cal" class="view-pane active">
+      <div class="row g-2 h-100">
+        <div class="col-md-3 d-none d-md-block no-print">
+          <div class="card p-3 h-100 shadow-sm">
+            <h6 class="fw-bold">凡例</h6><div id="legend-container" class="mb-3"></div>
+            <h6 class="fw-bold">表示設定</h6>
+            <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="deka-mode-sw" onchange="toggleDekaMode()"><label class="form-check-label" for="deka-mode-sw">デカ文字モード</label></div>
+            <h6 class="fw-bold">マスタ登録</h6>
+            <div class="d-grid gap-2">
+              <button class="btn btn-sm btn-outline-primary" onclick="addMaster('client')">元請け</button>
+              <button class="btn btn-sm btn-outline-success" onclick="addMaster('site')">現場</button>
+              <button class="btn btn-sm btn-outline-dark" onclick="addMaster('worker')">作業員</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-9 col-12 h-100">
+           <div id="calendar" class="bg-white p-2 rounded shadow-sm" style="min-height:800px;"></div>
+        </div>
+      </div>
+      <button class="fab no-print" onclick="openSchModal()"><i class="fas fa-plus"></i></button>
+    </div>
+
+    <div id="view-alloc" class="view-pane">
+       <div class="d-flex justify-content-between align-items-center mb-2 bg-white p-2 rounded shadow-sm sticky-top" style="z-index: 100;">
+         <h5 class="m-0 fw-bold" id="alloc-ym-label">Loading...</h5>
+         <div><button class="btn btn-sm btn-outline-secondary" onclick="moveAlloc(-1)">◀</button><button class="btn btn-sm btn-outline-secondary" onclick="moveAlloc(1)">▶</button></div>
+       </div>
+       <div style="overflow:auto;"><div class="bg-white shadow-sm rounded">
+         <table class="table table-bordered table-sm text-center small mb-0" id="alloc-table" style="min-width:1000px;"></table>
+       </div></div>
+    </div>
+
+    <div id="view-analysis" class="view-pane">
+       <div class="bg-white p-2 mb-3 sticky-top rounded shadow-sm">
+         <div class="d-flex justify-content-between align-items-center">
+           <div class="btn-group btn-group-sm">
+             <input type="radio" class="btn-check" name="anl-mode" id="am-month" checked onchange="loadAnalysis()"><label class="btn btn-outline-success" for="am-month">単月</label>
+             <input type="radio" class="btn-check" name="anl-mode" id="am-total" onchange="loadAnalysis()"><label class="btn btn-outline-success" for="am-total">累計</label>
+           </div>
+           <input type="month" id="anl-month" class="form-control form-control-sm w-auto" onchange="loadAnalysis()">
+         </div>
+       </div>
+       <div class="row g-2 mb-3">
+         <div class="col-4"><div class="card p-2 text-center border-primary border-start border-3"><small class="text-muted">売上</small><div class="fw-bold" id="val-sales">0</div></div></div>
+         <div class="col-4"><div class="card p-2 text-center border-danger border-start border-3"><small class="text-muted">原価</small><div class="fw-bold" id="val-cost">0</div></div></div>
+         <div class="col-4"><div class="card p-2 text-center border-success border-start border-3"><small class="text-muted">粗利</small><div class="fw-bold" id="val-profit">0</div></div></div>
+       </div>
+       <div class="row g-2 mb-3">
+         <div class="col-md-6"><div class="card h-100"><div class="card-header bg-white fw-bold">コスト内訳</div><div class="card-body"><canvas id="chart-breakdown"></canvas></div></div></div>
+         <div class="col-md-6"><div class="card h-100"><div class="card-header bg-white fw-bold">作業員ランキング (稼働)</div><div class="card-body p-0"><ul class="list-group list-group-flush small" id="worker-rank-list"></ul></div></div></div>
+       </div>
+       <div class="card"><div class="card-header bg-white fw-bold">現場別予実 (24%ルール & 請求書突合)</div>
+         <div class="table-responsive"><table class="table table-sm table-striped mb-0 small" style="min-width:600px"><thead><tr><th>現場名</th><th>原価</th><th>利益</th><th>24%判定</th><th>未請求残</th></tr></thead><tbody id="site-anl-table"></tbody></table></div>
+       </div>
+    </div>
+
+    <div id="view-history" class="view-pane">
+       <div class="d-flex justify-content-between mb-3"><input type="month" id="hist-month" class="form-control w-auto" onchange="loadHistory()"><button class="btn btn-sm btn-secondary" onclick="loadHistory()">更新</button></div>
+       <div id="history-list" class="vstack gap-2"></div>
+    </div>
+
+    <div id="view-config" class="view-pane">
+       <div class="card shadow-sm mb-3">
+         <div class="card-header bg-success text-white fw-bold">設定</div>
+         <div class="card-body">
+           <div class="form-check form-switch mb-3"><input class="form-check-input" type="checkbox" id="cfg-line-active"><label class="form-check-label">LINE自動通知</label></div>
+           <button class="btn btn-success w-100 mb-2" onclick="saveConfig()">保存</button>
+           <button class="btn btn-outline-primary w-100" onclick="configCalendar()">📅 共有カレンダー設定</button>
+         </div>
+       </div>
+    </div>
+
+  </div>
+
+  <div class="modal fade" id="schModal" tabindex="-1">
+    <div class="modal-dialog modal-dialog-centered">
+      <div class="modal-content">
+        <div class="modal-header bg-primary text-white py-2"><h6 class="modal-title fw-bold">予定登録</h6><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">
+          <input type="hidden" id="sch-id">
+          <div class="row g-2 mb-2"><div class="col-6"><input type="date" id="sch-start" class="form-control fw-bold"></div><div class="col-6"><input type="date" id="sch-end" class="form-control fw-bold"></div></div>
+          <div class="mb-2"><label class="small fw-bold">現場</label><select id="sch-site" class="form-select fw-bold" onchange="updateContractOptions()"></select></div>
+
+          <ul class="nav nav-tabs nav-fill small mb-2"><li class="nav-item"><a class="nav-link active p-1" data-bs-toggle="tab" href="#tab-w">👷 作業員</a></li><li class="nav-item"><a class="nav-link p-1" data-bs-toggle="tab" href="#tab-m">🚜 機械</a></li><li class="nav-item"><a class="nav-link p-1" data-bs-toggle="tab" href="#tab-t">📦 資材</a></li></ul>
+          <div class="tab-content border p-2 mb-2 rounded bg-light" style="height:150px; overflow-y:auto;">
+            <div class="tab-pane fade show active" id="tab-w"><div id="list-w" class="d-flex flex-wrap gap-2"></div></div>
+            <div class="tab-pane fade" id="tab-m"><div id="list-m" class="d-flex flex-wrap gap-2"></div></div>
+            <div class="tab-pane fade" id="tab-t"><div id="list-t" class="d-flex flex-wrap gap-2"></div></div>
+          </div>
+
+          <div class="mb-2 mt-2">
+            <label class="small fw-bold">契約工種 (検索・選択)</label>
+            <input type="text" class="form-control form-control-sm mb-1" placeholder="工種を検索..." onkeyup="filterList('cont', this.value)">
+            <div id="list-cont" class="border rounded p-2 bg-white" style="height:100px; overflow-y:auto;"></div>
+          </div>
+
+          <div class="mb-2"><input type="text" id="sch-content" class="form-control form-control-sm" placeholder="備考 (自由記述)"></div>
+        </div>
+        <div class="modal-footer p-1">
+            <button class="btn btn-danger btn-sm me-auto" onclick="delSch()">削除</button>
+            <button class="btn btn-success btn-sm" onclick="createRpt()">日報作成</button>
+            <button class="btn btn-primary fw-bold" onclick="saveSch()">保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal fade" id="rptModal" tabindex="-1" data-bs-backdrop="static">
+    <div class="modal-dialog modal-fullscreen">
+      <div class="modal-content bg-light">
+        <div class="modal-header bg-white py-2 shadow-sm">
+            <span class="fw-bold flex-grow-1" id="rpt-site-name">日報入力</span>
+            <button class="btn btn-secondary btn-sm me-2" data-bs-dismiss="modal">閉じる</button>
+            <button class="btn btn-primary fw-bold" onclick="submitRpt()">提出</button>
+        </div>
+        <div class="modal-body p-2 pb-5">
+           <input type="hidden" id="rpt-id"><input type="hidden" id="rpt-sch-id"><input type="hidden" id="rpt-site-id">
+           <div class="alert alert-info py-1 mb-2 small" onclick="smartRecall()" style="cursor:pointer"><i class="fas fa-history"></i> 前回履歴コピー</div>
+
+           <div class="rpt-section border-info" style="border-left:4px solid #0dcaf0">
+               <div class="d-flex justify-content-between mb-2"><span class="fw-bold text-info">環境・交通</span><span class="badge bg-light text-dark" id="rpt-route-info"></span></div>
+               <div class="row g-2">
+                   <div class="col-6"><select id="rpt-weather" class="form-select form-select-sm"><option value="晴">晴</option><option value="曇">曇</option><option value="雨">雨</option></select></div>
+                   <div class="col-6"><div class="input-group input-group-sm"><input type="number" id="rpt-temp" class="form-control" placeholder="20"><span class="input-group-text">℃</span></div></div>
+               </div>
+           </div>
+
+           <div class="rpt-section border-primary" style="border-left:4px solid #0d6efd">
+               <div class="d-flex justify-content-between mb-2"><span class="fw-bold text-primary">人工</span><button class="btn btn-sm btn-outline-primary py-0" onclick="addLabor()">＋</button></div>
+               <div id="list-rpt-labor"></div>
+           </div>
+
+           <div class="rpt-section border-warning" style="border-left:4px solid #ffc107">
+               <div class="d-flex justify-content-between mb-2"><span class="fw-bold text-warning">資材・機械</span><button class="btn btn-sm btn-outline-warning py-0" onclick="addRes()">＋</button></div>
+               <div id="list-rpt-res"></div>
+           </div>
+
+           <div class="rpt-section border-success" style="border-left:4px solid #198754">
+               <div class="d-flex justify-content-between mb-2"><span class="fw-bold text-success">出来高 (工種)</span><button class="btn btn-sm btn-outline-success py-0" onclick="addWork()">＋</button></div>
+               <div id="list-rpt-work"></div>
+           </div>
+
+           <div class="rpt-section border-danger" style="border-left:4px solid #dc3545">
+               <div class="d-flex justify-content-between mb-2"><span class="fw-bold text-danger">経費</span><button class="btn btn-sm btn-outline-danger py-0" onclick="addExp()">＋</button></div>
+               <div id="list-rpt-exp"></div>
+           </div>
+
+           <div class="rpt-section">
+               <div class="fw-bold mb-2">現場写真</div>
+               <div class="d-flex overflow-auto gap-2" id="photo-area">
+                   <button class="btn btn-light border" style="min-width:60px;height:60px;" onclick="document.getElementById('photo-input').click()">＋</button>
+                   <input type="file" id="photo-input" accept="image/*" multiple style="display:none" onchange="addPhoto(this)">
+               </div>
+           </div>
+           <div class="text-center mt-4 mb-5"><div class="small text-muted">原価合計</div><div class="fs-1 fw-bold" id="rpt-total-disp">¥0</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let App = { data: {}, photoCache: [] };
+    let cal = null, chart = null;
+
+    window.onload = () => initApp();
+    function initApp() {
+      document.getElementById('loading-screen').style.display = 'flex';
+      google.script.run.withSuccessHandler(res => {
+          if (res.success) {
+            App.data = res;
+            initCalendar(); renderAlloc(); loadAnalysis(); loadHistory();
+            document.getElementById('loading-screen').style.display = 'none';
+          } else { alert('Error: ' + res.msg); }
+      }).getStartupData();
+      const today = new Date().toISOString().slice(0, 7);
+      document.getElementById('anl-month').value = today;
+      document.getElementById('hist-month').value = today;
+    }
+
+    function switchTab(id) {
+       document.querySelectorAll('.view-pane').forEach(e => e.classList.remove('active'));
+       document.querySelectorAll('.nav-link').forEach(e => e.classList.remove('active'));
+       document.getElementById('view-' + id).classList.add('active');
+       event.currentTarget.classList.add('active');
+       if (id === 'cal' && cal) cal.render();
+       if (id === 'alloc') renderAlloc();
+       if (id === 'analysis') loadAnalysis();
+       if (id === 'history') loadHistory();
+    }
+
+    /* --- Calendar --- */
+    function initCalendar() {
+      cal = new FullCalendar.Calendar(document.getElementById('calendar'), {
+        initialView: 'dayGridMonth', locale: 'ja', height: '100%',
+        events: (info, success) => {
+          google.script.run.withSuccessHandler(res => success(res.map(e => ({
+               id: e.id, title: e.clientName, start: e.start, end: e.end, backgroundColor: e.color, borderColor: e.color, extendedProps: e
+          })))).getSchedules(info.startStr, info.endStr);
+        },
+        eventContent: (arg) => {
+           const p = arg.event.extendedProps;
+           const isDeka = document.getElementById('deka-mode-sw').checked;
+           const getNames = (ids, src) => (ids || []).map(id => (src.find(x => x.id == id) || { name: '' }).name).filter(n => n);
+           const workers = getNames(p.workerIds, App.data.workers);
+
+           if (isDeka) return { html: `<div class="text-center"><div style="font-size:1.1rem;font-weight:900;">${p.siteName}</div><div class="bg-white text-dark rounded fw-bold px-1">${workers.join(', ')}</div></div>` };
+
+           let html = `<div class="evt-header">${p.siteName}</div>`;
+           if (workers.length) html += `<div class="evt-row">👷 ${workers.join(',')}</div>`;
+           if (p.content) html += `<div class="evt-row">📝 ${p.content}</div>`;
+           return { html: `<div>${html}</div>` };
+        },
+        eventClick: (info) => openSchModal(info.event.extendedProps),
+        dateClick: (info) => openSchModal({ start: info.dateStr, end: info.dateStr })
+      });
+      cal.render();
+      document.getElementById('legend-container').innerHTML = App.data.clients.map(c => `<span class="badge me-1 mb-1" style="background:${c.color};color:#fff">${c.name}</span>`).join(' ');
+    }
+    function toggleDekaMode() { cal.render(); }
+
+    /* --- Schedule Modal --- */
+    const schModal = new bootstrap.Modal(document.getElementById('schModal'));
+    function openSchModal(p = null) {
+       document.getElementById('sch-id').value = p && p.realId ? p.realId : '';
+       document.getElementById('sch-start').value = p ? p.start.split('T')[0] : '';
+       document.getElementById('sch-end').value = p ? (p.end ? p.end.split('T')[0] : p.start.split('T')[0]) : '';
+       const sel = document.getElementById('sch-site');
+       sel.innerHTML = '<option value="">(現場選択)</option>' + App.data.sites.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+       if (p) sel.value = p.siteId;
+
+       const mkChk = (list, pf, sIds) => list.map(x => `<div class="form-check form-check-inline border rounded px-2 m-1 list-item"><input class="form-check-input ${pf}-chk" type="checkbox" id="${pf}-${x.id}" value="${x.id}" ${(sIds || []).includes(x.id) ? 'checked' : ''}><label class="form-check-label small" for="${pf}-${x.id}">${x.name}</label></div>`).join('');
+       document.getElementById('list-w').innerHTML = mkChk(App.data.workers, 'chk-w', p ? p.workerIds : []);
+       document.getElementById('list-m').innerHTML = mkChk(App.data.machines, 'chk-mac', p ? p.machineIds : []);
+
+       // ★変数名統一: App.data.materials
+       document.getElementById('list-t').innerHTML = mkChk(App.data.materials, 'chk-mat', p ? p.materialIds : []);
+       document.getElementById('sch-content').value = p ? p.content : '';
+
+       updateContractOptions(p ? p.contractItems : []);
+       schModal.show();
+    }
+    function updateContractOptions(selectedItems = []) {
+       const sid = document.getElementById('sch-site').value;
+       const list = document.getElementById('list-cont');
+       list.innerHTML = '';
+       const items = App.data.estimates.filter(e => e.sid == sid);
+       if (items.length === 0) { list.innerHTML = '<div class="text-muted small">契約工種なし</div>'; return; }
+
+       const selectedNames = selectedItems.map(i => i.name);
+       list.innerHTML = items.map(c => `
+           <div class="form-check list-item">
+               <input class="form-check-input chk-cont" type="checkbox" value="${c.item}" id="cont-${c.item}" ${selectedNames.includes(c.item) ? 'checked' : ''}
+                      data-price="${c.price}" data-unit="${c.unit}">
+               <label class="form-check-label small" for="cont-${c.item}">
+                   ${c.item} <span class="text-muted">(${c.qty}${c.unit}) ${c.remarks ? '※' + c.remarks : ''}</span>
+               </label>
+           </div>
+       `).join('');
+    }
+    function filterList(type, val) {
+       document.querySelectorAll(`#list-${type} .list-item`).forEach(el => {
+           el.style.display = el.innerText.toLowerCase().includes(val.toLowerCase()) ? '' : 'none';
+       });
+    }
+    function saveSch() {
+       const getIds = (pf) => [...document.querySelectorAll(`.${pf}-chk:checked`)].map(e => e.value);
+       const contracts = [...document.querySelectorAll('.chk-cont:checked')].map(e => ({
+           name: e.value, qty: 1, price: e.dataset.price, unit: e.dataset.unit
+       }));
+       const evt = {
+           id: document.getElementById('sch-id').value,
+           start: document.getElementById('sch-start').value, end: document.getElementById('sch-end').value, siteId: document.getElementById('sch-site').value,
+           workerIds: getIds('chk-w'), machineIds: getIds('chk-mac'), materialIds: getIds('chk-mat'),
+           contractItems: contracts, content: document.getElementById('sch-content').value
+       };
+       if (!evt.siteId) return alert("現場必須");
+       google.script.run.withSuccessHandler(() => { schModal.hide(); cal.refetchEvents(); renderAlloc(); }).saveScheduleEvent(evt);
+    }
+
+    /* --- Report Modal --- */
+    const rptModal = new bootstrap.Modal(document.getElementById('rptModal'));
+    function createRpt() {
+        const sid = document.getElementById('sch-site').value;
+        const sDate = document.getElementById('sch-start').value;
+        if (!sid) return alert("現場を選択してください");
+
+        schModal.hide();
+        document.getElementById('rpt-id').value = '';
+        document.getElementById('rpt-sch-id').value = document.getElementById('sch-id').value;
+        document.getElementById('rpt-site-id').value = sid;
+        const sName = document.getElementById('sch-site').options[document.getElementById('sch-site').selectedIndex].text;
+        document.getElementById('rpt-site-name').innerText = `${sDate} ${sName}`;
+
+        ['list-rpt-labor', 'list-rpt-res', 'list-rpt-work', 'list-rpt-exp', 'photo-area'].forEach(id => document.getElementById(id).innerHTML = '');
+        document.getElementById('photo-area').innerHTML = '<button class="btn btn-light border" style="min-width:60px;height:60px;" onclick="document.getElementById(\'photo-input\').click()">＋</button><input type="file" id="photo-input" accept="image/*" multiple style="display:none" onchange="addPhoto(this)">';
+        App.photoCache = [];
+
+        document.querySelectorAll('.chk-w-chk:checked').forEach(c => { const w = App.data.workers.find(x => x.id == c.value); if (w) addLabor({ name: w.name }); });
+        document.querySelectorAll('.chk-mac-chk:checked').forEach(c => { const m = App.data.machines.find(x => x.id == c.value); if (m) addRes({ name: m.name, type: 'machine', price: m.price, unit: m.unit }); });
+
+        // ★変数名統一: App.data.materials
+        document.querySelectorAll('.chk-mat-chk:checked').forEach(c => { const m = App.data.materials.find(x => x.id == c.value); if (m) addRes({ name: m.name, type: 'material', price: m.price, unit: m.unit }); });
+        document.querySelectorAll('.chk-cont:checked').forEach(c => { addWork({ item: c.value, qty: 1, price: c.dataset.price, unit: c.dataset.unit }); });
+
+        google.script.run.withSuccessHandler(res => { if (res.success && res.items.length) { document.getElementById('rpt-route-info').innerText = res.items[0].name; addExp(res.items[0]); } }).calculateCostAndWeather(sid);
+        rptModal.show(); calcTotal();
+    }
+
+    function editReport(reportId) {
+        document.getElementById('loading-screen').style.display = 'flex';
+        google.script.run.withSuccessHandler(res => {
+            document.getElementById('loading-screen').style.display = 'none';
+            if (!res.success) return alert(res.msg);
+            const d = res.data;
+            document.getElementById('rpt-id').value = d.id;
+            document.getElementById('rpt-site-id').value = d.siteId;
+            document.getElementById('rpt-site-name').innerText = `${d.date} ${d.siteName}`;
+            document.getElementById('rpt-weather').value = d.weather;
+            document.getElementById('rpt-temp').value = d.temp;
+
+            ['list-rpt-labor', 'list-rpt-res', 'list-rpt-work', 'list-rpt-exp'].forEach(id => document.getElementById(id).innerHTML = '');
+
+            d.labor.forEach(l => addLabor(l));
+            d.materials.forEach(m => addRes({ ...m, type: 'material' }));
+            d.machines.forEach(m => addRes({ ...m, type: 'machine' }));
+            d.works.forEach(w => addWork(w));
+            d.expenses.forEach(e => addExp(e));
+            calcTotal();
+            rptModal.show();
+        }).getReportById(reportId);
+    }
+
+    function addLabor(d = {}) {
+        const div = document.createElement('div'); div.className = 'card p-2 mb-2 shadow-sm border-start border-3 border-primary labor-row';
+        div.innerHTML = `<div class="d-flex justify-content-between mb-1"><input type="text" class="form-control form-control-sm l-name fw-bold" placeholder="氏名" value="${d.name || ''}" style="width:60%"><button class="btn btn-close" onclick="this.closest('.card').remove();calcTotal()"></button></div><div class="input-group input-group-sm"><input type="time" class="form-control l-start" value="${d.startTime || '08:00'}"><span class="input-group-text">~</span><input type="time" class="form-control l-end" value="${d.endTime || '17:00'}"><input type="number" class="form-control l-qty text-center bg-light fw-bold" value="${d.qty || 1.0}" readonly style="max-width:50px"><span class="input-group-text">工</span></div>`;
+        div.querySelectorAll('input[type=time]').forEach(i => i.onchange = () => { const s = div.querySelector('.l-start').valueAsNumber, e = div.querySelector('.l-end').valueAsNumber; if (s && e) { div.querySelector('.l-qty').value = Math.max(0.25, Math.ceil(((e - s) / 3600000 - 1) / 8 * 4) / 4); calcTotal(); } });
+        document.getElementById('list-rpt-labor').appendChild(div); calcTotal();
+    }
+    function addRes(d = {}) {
+        const div = document.createElement('div'); div.className = 'input-group input-group-sm mb-2 res-row';
+        div.innerHTML = `<span class="input-group-text">${d.type === 'machine' ? '🚜' : '📦'}</span><input type="text" class="form-control r-name" value="${d.name || ''}" placeholder="品名"><input type="number" class="form-control r-qty" value="${d.qty || 1}" style="max-width:50px" onchange="calcTotal()"><input type="number" class="form-control r-price" value="${d.price || 0}" style="max-width:70px" onchange="calcTotal()"><span class="input-group-text small">${d.unit || '個'}</span><input type="hidden" class="r-type" value="${d.type || 'material'}"><button class="btn btn-outline-danger" onclick="this.parentElement.remove();calcTotal()">×</button>`;
+        document.getElementById('list-rpt-res').appendChild(div); calcTotal();
+    }
+    function addWork(d = {}) {
+        const div = document.createElement('div'); div.className = 'input-group input-group-sm mb-2 work-row';
+        div.innerHTML = `<input type="text" class="form-control w-item" value="${d.item || ''}" placeholder="工種"><input type="number" class="form-control w-qty" value="${d.qty || 1}" style="max-width:50px"><span class="input-group-text small">${d.unit || '式'}</span><input type="hidden" class="w-price" value="${d.price || 0}"><button class="btn btn-outline-success" onclick="this.parentElement.remove()">×</button>`;
+        document.getElementById('list-rpt-work').appendChild(div);
+    }
+    function addExp(d = {}) {
+        const div = document.createElement('div'); div.className = 'input-group input-group-sm mb-2 exp-row';
+        div.innerHTML = `<span class="input-group-text">¥</span><input type="text" class="form-control e-name" value="${d.name || ''}" placeholder="経費名"><input type="number" class="form-control e-price" value="${d.price || 0}" onchange="calcTotal()"><button class="btn btn-outline-danger" onclick="this.parentElement.remove();calcTotal()">×</button>`;
+        document.getElementById('list-rpt-exp').appendChild(div); calcTotal();
+    }
+
+    function calcTotal() {
+       let t = 0;
+       document.querySelectorAll('.l-qty').forEach(e => t += (Number(e.value) * 20000));
+       document.querySelectorAll('.res-row').forEach(r => t += (Number(r.querySelector('.r-qty').value) * Number(r.querySelector('.r-price').value)));
+       document.querySelectorAll('.e-price').forEach(e => t += Number(e.value));
+       document.getElementById('rpt-total-disp').innerText = '¥' + t.toLocaleString();
+       return t;
+    }
+    function smartRecall() {
+       const sid = document.getElementById('rpt-site-id').value;
+       if (confirm("前回の履歴をコピーしますか？")) {
+           google.script.run.withSuccessHandler(res => {
+               if (res.success) {
+                   res.labor.forEach(l => addLabor(l));
+                   res.materials.forEach(m => addRes({ ...m, type: 'material' }));
+                   res.machines.forEach(m => addRes({ ...m, type: 'machine' }));
+                   res.expenses.forEach(e => addExp(e));
+               } else alert("履歴がありません");
+           }).getLastReport(sid);
+       }
+    }
+    function addPhoto(input) {
+       Array.from(input.files).forEach(f => {
+          const reader = new FileReader();
+          reader.onload = (e) => { App.photoCache.push({ data: e.target.result.split(',')[1] }); const img = document.createElement('img'); img.src = e.target.result; img.className = 'img-thumbnail'; img.style = "width:60px;height:60px;object-fit:cover"; document.getElementById('photo-area').appendChild(img); };
+          reader.readAsDataURL(f);
+       });
+    }
+    function submitRpt() {
+        if (!confirm("提出しますか？")) return;
+        const d = {
+            id: document.getElementById('rpt-id').value,
+            scheduleId: document.getElementById('rpt-sch-id').value,
+            siteId: document.getElementById('rpt-site-id').value,
+            clientName: "",
+            siteName: document.getElementById('rpt-site-name').innerText,
+            date: document.getElementById('sch-start').value || new Date().toISOString().slice(0, 10),
+            weather: document.getElementById('rpt-weather').value,
+            temp: document.getElementById('rpt-temp').value,
+            totalCost: calcTotal(),
+            photos: App.photoCache,
+            labor: [...document.querySelectorAll('.labor-row')].map(r => ({ name: r.querySelector('.l-name').value, startTime: r.querySelector('.l-start').value, endTime: r.querySelector('.l-end').value, qty: Number(r.querySelector('.l-qty').value) })),
+            materials: [...document.querySelectorAll('.res-row')].filter(r => r.querySelector('.r-type').value === 'material').map(r => ({ name: r.querySelector('.r-name').value, qty: Number(r.querySelector('.r-qty').value), price: Number(r.querySelector('.r-price').value), unit: r.querySelector('.r-type').previousElementSibling?.innerText || '個' })),
+            machines: [...document.querySelectorAll('.res-row')].filter(r => r.querySelector('.r-type').value === 'machine').map(r => ({ name: r.querySelector('.r-name').value, qty: Number(r.querySelector('.r-qty').value), price: Number(r.querySelector('.r-price').value), unit: r.querySelector('.r-type').previousElementSibling?.innerText || '台' })),
+            works: [...document.querySelectorAll('.work-row')].map(r => ({ item: r.querySelector('.w-item').value, qty: Number(r.querySelector('.w-qty').value), price: Number(r.querySelector('.w-price').value), unit: '式' })),
+            expenses: [...document.querySelectorAll('.exp-row')].map(r => ({ name: r.querySelector('.e-name').value, price: Number(r.querySelector('.e-price').value) }))
+        };
+        google.script.run.withSuccessHandler(res => {
+            if (res.success) { alert("提出完了"); rptModal.hide(); loadHistory(); cal.refetchEvents(); }
+            else alert(res.msg);
+        }).submitDailyReport(d);
+    }
+
+    /* --- Allocation --- */
+    let allocDate = new Date();
+    function moveAlloc(n) { allocDate.setMonth(allocDate.getMonth() + n); renderAlloc(); }
+    function renderAlloc() {
+        const y = allocDate.getFullYear(), m = allocDate.getMonth() + 1;
+        document.getElementById('alloc-ym-label').innerText = `${y}年${m}月`;
+        google.script.run.withSuccessHandler(evts => {
+            const l = new Date(y, m, 0).getDate();
+            let h = `<thead><tr><th class="bg-light sticky-start" style="width:80px;z-index:10;">氏名</th>`;
+            for (let d = 1; d <= l; d++) h += `<th style="min-width:35px">${d}</th>`;
+            h += `</tr></thead><tbody>`;
+            App.data.workers.forEach(w => {
+                h += `<tr><td class="bg-light fw-bold text-nowrap sticky-start" style="left:0;z-index:9;">${w.short}</td>`;
+                for (let d = 1; d <= l; d++) {
+                    const ymd = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                    const ev = evts.find(e => e.start.startsWith(ymd) && e.workerIds.includes(w.id));
+                    h += ev ? `<td style="background-color:${ev.color} !important;padding:0;"><div class="alloc-cell-text">${ev.siteName}</div></td>` : `<td></td>`;
+                } h += `</tr>`;
+            });
+            document.getElementById('alloc-table').innerHTML = h + '</tbody>';
+        }).getSchedules(new Date(y, m - 1, 1).toISOString(), new Date(y, m, 0).toISOString());
+    }
+
+    /* --- Analysis & History --- */
+    function loadAnalysis() {
+        const y = Number(document.getElementById('anl-month').value.split('-')[0]);
+        const m = Number(document.getElementById('anl-month').value.split('-')[1]);
+        const mode = document.getElementById('am-month').checked ? 'month' : 'total';
+
+        google.script.run.withSuccessHandler(res => {
+            document.getElementById('val-sales').innerText = '¥' + res.stats.sales.toLocaleString();
+            document.getElementById('val-cost').innerText = '¥' + res.stats.cost.toLocaleString();
+            document.getElementById('val-profit').innerText = '¥' + (res.stats.sales - res.stats.cost).toLocaleString();
+            if (chart) chart.destroy();
+            const bd = res.stats.breakdown;
+            chart = new Chart(document.getElementById('chart-breakdown'), {
+                type: 'doughnut', data: { labels: ['人工', '資材', '機械', '経費'], datasets: [{ data: [bd.LABOR, bd.MATERIAL, bd.MACHINE, bd.EXPENSE], backgroundColor: ['#0d6efd', '#ffc107', '#fd7e14', '#dc3545'] }] }
+            });
+            document.getElementById('worker-rank-list').innerHTML = res.ranking.map((r, i) => `<li class="list-group-item d-flex justify-content-between"><span>${i + 1}. ${r.name}</span><span class="badge bg-primary rounded-pill">${r.days}日</span></li>`).join('');
+            document.getElementById('site-anl-table').innerHTML = res.sites.map(s => `<tr><td>${s.name}</td><td>¥${s.cost.toLocaleString()}</td><td class="${s.profit > 0 ? 'text-success' : 'text-danger'}">¥${s.profit.toLocaleString()}</td><td><span class="badge ${s.is24Ok ? 'bg-success' : 'bg-danger'}">${s.is24Ok ? '達成' : '未達'}</span></td><td>¥${s.invoiceDiff.toLocaleString()}</td></tr>`).join('');
+        }).getGraphData(y, m, mode);
+    }
+
+    function loadHistory() {
+        const ym = document.getElementById('hist-month').value.split('-');
+        google.script.run.withSuccessHandler(res => {
+            if (!res.list.length) { document.getElementById('history-list').innerHTML = '<div class="text-center text-muted p-3">履歴なし</div>'; return; }
+            document.getElementById('history-list').innerHTML = res.list.map(h => {
+                const done = h.status === '承認済';
+                return `<div class="card shadow-sm border-start border-4 ${done ? 'border-success' : 'border-secondary'}" onclick="editReport('${h.id}')" style="cursor:pointer"><div class="card-body p-2 d-flex justify-content-between align-items-center"><div><div class="fw-bold">${h.date} ${h.siteName}</div><div class="small text-muted"><i class="fas fa-user"></i> ${h.reporter}</div></div><div class="text-end"><div class="fw-bold">¥${h.total.toLocaleString()}</div>${done ? '<span class="badge bg-success">承認済</span>' : `<button class="btn btn-sm btn-outline-primary" onclick="event.stopPropagation();if(confirm('承認？'))google.script.run.withSuccessHandler(loadHistory).approveAndSyncToCalendar('${h.id}')">承認</button>`}</div></div></div>`;
+            }).join('');
+        }).getReportHistory(Number(ym[0]), Number(ym[1]));
+    }
+
+    /* --- Config/Master --- */
+    function saveConfig() { google.script.run.saveLineConfig({ active: document.getElementById('cfg-line-active').checked }); alert("保存"); }
+    function configCalendar() {
+        const msg = "カレンダーIDを入力してください。\n空欄のままOKを押すと解除され、個人のカレンダーが使用されます。";
+        const id = prompt(msg);
+        if (id !== null) google.script.run.withSuccessHandler(r => alert(r.msg)).saveCompanyCalendarId(id);
+    }
+    function addMaster(t) { const n = prompt("名称"); const s = prompt("略称"); if (n && s) google.script.run.withSuccessHandler(() => location.reload()).addMasterData(t, n, s); }
+    function delSch() { alert("機能未実装"); }
+  </script>
+</body>
+</html>
